@@ -81,8 +81,10 @@ from losses import DependencyAwareLoss
 B = 8
 V = 1538
 
-logits = torch.randn(B, V)
-labels = torch.randint(0, 2, (B, V))
+logits = torch.randn(B, V, requires_grad=True)
+
+# Sparse multi-label targets, roughly 0.5% positives.
+labels = (torch.rand(B, V) < 0.005).long()
 
 criterion = DependencyAwareLoss(
     vocab_size=V,
@@ -95,15 +97,20 @@ loss = criterion(logits, labels)
 loss.backward()
 
 print(loss.item())
+
 ```
 
 The dependency-aware loss also accepts higher-dimensional inputs, as long as the final dimension is the vocabulary dimension:
 
 ```python
-logits = torch.randn(4, 3, V)
-labels = torch.randint(0, 2, (4, 3, V))
+logits = torch.randn(4, 3, V, requires_grad=True)
+labels = (torch.rand(4, 3, V) < 0.005).long()
 
 loss = criterion(logits, labels)
+loss.backward()
+
+print(loss.item())
+
 ```
 
 ## Baseline loss examples
@@ -119,8 +126,8 @@ from losses import (
 B = 8
 V = 1538
 
-logits = torch.randn(B, V)
-labels = torch.randint(0, 2, (B, V))
+logits = torch.randn(B, V, requires_grad=True)
+labels = (torch.rand(B, V) < 0.005).long()
 
 loss_bce = weighted_bce_with_logits(logits, labels)
 
@@ -136,6 +143,7 @@ loss_focal = focal_loss_with_logits(
     gamma=2.0,
     beta=0.9999,
 )
+
 ```
 
 ## Quick sanity check
@@ -152,16 +160,110 @@ from losses import (
     focal_loss_with_logits,
 )
 
-B, V = 4, 32
-logits = torch.randn(B, V)
-labels = torch.randint(0, 2, (B, V))
+torch.manual_seed(0)
 
-da = DependencyAwareLoss(vocab_size=V)
 
-print("Dependency-aware:", da(logits, labels).item())
-print("Weighted BCE:", weighted_bce_with_logits(logits, labels).item())
-print("Class-balanced BCE:", class_balanced_bce_with_logits(logits, labels).item())
-print("Focal:", focal_loss_with_logits(logits, labels).item())
+def make_sparse_labels(shape, positive_rate=0.02):
+    labels = (torch.rand(*shape) < positive_rate).long()
+    if labels.sum() == 0:
+        labels.view(-1)[0] = 1
+    return labels
+
+
+def check_loss(name, loss_fn, B=4, V=64):
+    logits = torch.randn(B, V, requires_grad=True)
+    labels = make_sparse_labels((B, V), positive_rate=0.02)
+
+    loss = loss_fn(logits, labels)
+
+    assert loss.dim() == 0, f"{name}: loss is not scalar"
+    assert torch.isfinite(loss), f"{name}: loss is not finite"
+
+    loss.backward()
+
+    assert logits.grad is not None, f"{name}: logits.grad is None"
+    assert torch.isfinite(logits.grad).all(), f"{name}: logits.grad has NaN/Inf"
+
+    print(f"{name}: OK | loss={loss.item():.6f}")
+
+
+# Dependency-aware loss
+da = DependencyAwareLoss(
+    vocab_size=64,
+    alpha_neg=25.0,
+    lambda_reg=10.0,
+    ignore_index=-1,
+)
+
+check_loss("Dependency-aware", da, B=4, V=64)
+check_loss("Weighted BCE", weighted_bce_with_logits, B=4, V=64)
+check_loss("Class-balanced BCE", class_balanced_bce_with_logits, B=4, V=64)
+check_loss("Focal", focal_loss_with_logits, B=4, V=64)
+
+
+# Higher-dimensional dependency-aware example
+logits = torch.randn(2, 3, 64, requires_grad=True)
+labels = make_sparse_labels((2, 3, 64), positive_rate=0.02)
+
+loss = da(logits, labels)
+assert loss.dim() == 0
+assert torch.isfinite(loss)
+
+loss.backward()
+assert logits.grad is not None
+assert torch.isfinite(logits.grad).all()
+
+print(f"Dependency-aware 3D input: OK | loss={loss.item():.6f}")
+
+
+# Ignore-index test
+logits = torch.randn(4, 64, requires_grad=True)
+labels = make_sparse_labels((4, 64), positive_rate=0.02)
+labels[0, :] = -1
+
+loss = da(logits, labels)
+assert torch.isfinite(loss)
+loss.backward()
+
+print(f"Dependency-aware with one ignored row: OK | loss={loss.item():.6f}")
+
+
+# All-ignore test
+logits = torch.randn(4, 64, requires_grad=True)
+labels = torch.full((4, 64), -1)
+
+loss = da(logits, labels)
+assert torch.isfinite(loss)
+assert loss.item() == 0.0
+
+loss.backward()
+
+print(f"Dependency-aware all ignored: OK | loss={loss.item():.6f}")
+
+
+# Symmetric zero-diagonal W test
+W = da._sym_zero_diag(da.W_raw).detach()
+assert torch.allclose(W, W.T, atol=1e-6)
+assert torch.allclose(torch.diagonal(W), torch.zeros(W.shape[0]), atol=1e-6)
+
+print("Dependency matrix symmetry / zero diagonal: OK")
+
+
+# Mixed precision input test
+logits = torch.randn(4, 64, dtype=torch.float16, requires_grad=True)
+labels = make_sparse_labels((4, 64), positive_rate=0.02)
+
+loss = da(logits, labels)
+assert loss.dtype == torch.float32
+assert torch.isfinite(loss)
+
+loss.backward()
+assert logits.grad is not None
+
+print(f"Mixed precision input: OK | loss={loss.item():.6f}")
+
+
+print("\nAll sanity checks passed.")
 PY
 ```
 
