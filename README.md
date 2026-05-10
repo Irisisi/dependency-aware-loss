@@ -11,7 +11,9 @@ Included losses:
 - Class-balanced binary cross-entropy
 - Focal loss
 
-This repository contains code only. It does not contain CPRD data, trained CPRD models, patient-level data, or derived patient artefacts.
+## Data availability
+
+The paper uses data from the Clinical Practice Research Datalink (CPRD). CPRD data cannot be redistributed due to licensing, governance, and approval requirements.
 
 ## Repository structure
 
