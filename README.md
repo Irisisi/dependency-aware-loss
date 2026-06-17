@@ -219,7 +219,7 @@ If you use this code, please cite:
   author    = {Ho, Iris Szu-Szu and Werne, Lars and Rawlik, Konrad and Guthrie, Bruce and Seth, Sohan},
   booktitle = {Proceedings of the Conference on Health, Inference, and Learning},
   series    = {Proceedings of Machine Learning Research},
-  volume    = {297},
+  volume    = {333},
   pages     = {1--23},
   year      = {2026},
   publisher = {PMLR}
